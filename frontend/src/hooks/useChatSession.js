@@ -58,12 +58,22 @@ export function useChatSession() {
       setPendingResult(data);
     } catch (err) {
       let errText = 'Something went wrong. Please try again.';
-      if (err.code === 'ERR_NETWORK') {
+      
+      // Check if it's a network error
+      if (err.message === 'Network Error' || err.code === 'ERR_NETWORK' || !err.response) {
         errText = "Can't reach the server. Make sure the backend is running on port 3001.";
-      } else if (err.response?.status === 500) {
+      }
+      // Check for server error
+      else if (err.response?.status >= 500) {
         errText = 'Server error - check MongoDB URI and GROQ_API_KEY in backend/.env.';
-      } else if (err.response?.data?.error) {
+      }
+      // Check for validation/client errors
+      else if (err.response?.data?.error) {
         errText = err.response.data.error;
+      }
+      // Default error
+      else {
+        errText = err.message || 'Something went wrong. Please try again.';
       }
 
       setMessages((prev) => [

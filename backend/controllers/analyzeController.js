@@ -11,14 +11,33 @@ import {
   shouldResetProfileWindow,
 } from '../services/caregiverProfileService.js';
 const NEGATIVE_EMOTIONS = ['sadness', 'overwhelm', 'fatigue', 'isolation'];
-const OPENERS = [
-  'That sounds like a lot...',
-  'Hmm, that feels heavy...',
-  "Yeah, that's not easy...",
-];
+const OPENERS = {
+  english: [
+    'That sounds like a lot...',
+    'Hmm, that feels heavy...',
+    "Yeah, that's not easy...",
+  ],
+  hindi: [
+    'यह सुनकर भारी लग रहा है...',
+    'हम्म, यह सच में मुश्किल लग रहा है...',
+    'हाँ, यह आसान नहीं है...',
+  ],
+  kannada: [
+    'ಇದು ತುಂಬಾ ಭಾರವಾಗಿದೆ ಅನಿಸುತ್ತದೆ...',
+    'ಹ್ಮ್, ಇದು ಕಷ್ಟಕರವಾಗಿ ಕಾಣುತ್ತಿದೆ...',
+    'ಹೌದು, ಇದು ಸುಲಭವಲ್ಲ...',
+  ],
+};
 
-function pickOpener() {
-  return OPENERS[Math.floor(Math.random() * OPENERS.length)];
+function detectInputLanguage(text) {
+  if (/[\u0C80-\u0CFF]/.test(text)) return 'kannada';
+  if (/[\u0900-\u097F]/.test(text)) return 'hindi';
+  return 'english';
+}
+
+function pickOpener(language) {
+  const list = OPENERS[language] || OPENERS.english;
+  return list[Math.floor(Math.random() * list.length)];
 }
 
 function buildFallbackResponse(userInput, emotion) {
@@ -28,9 +47,32 @@ function buildFallbackResponse(userInput, emotion) {
 export async function analyzeCareRequest(req, res) {
   try {
     const { session_id, user_input, context } = req.body;
+    const safeInput = (user_input || '').trim();
+    const inputLanguage = detectInputLanguage(safeInput);
+    console.log('INPUT:', safeInput);
 
-    if (!session_id || !user_input) {
-      return res.status(400).json({ error: 'session_id and user_input are required.' });
+    if (!session_id || !safeInput) {
+      return res.json({
+        analysis: {
+          stress_level: 'low',
+          final_emotion: 'neutral',
+          tone: 'steady',
+          intent: 'statement',
+          domain: 'neutral',
+          action_trigger: 'none',
+          major_feature: 'normal',
+          unsaid: false,
+        },
+        response: "I'm here with you... share as much or as little as you want.",
+        actions: {
+          show_action_button: false,
+          generated_message: '',
+          suggests_meditation: false,
+          micro_plan: null,
+          nudge: '',
+          unsaid_probe: '',
+        },
+      });
     }
 
     const memory = await getMemoryContext(session_id);
@@ -52,10 +94,11 @@ export async function analyzeCareRequest(req, res) {
 
     const analysis = await runInferencePipeline({
       sessionId: session_id,
-      userInput: user_input,
+      userInput: safeInput,
       context: mergedContext,
       classifyEmotionFallback: classifyEmotionWithLLM,
     });
+    console.log('EMOTION:', analysis.emotion);
 
     if (analysis.domain === 'out_of_scope') {
       return res.json({
@@ -84,22 +127,24 @@ export async function analyzeCareRequest(req, res) {
     let llmResponse = '';
     try {
       llmResponse = await generateLLMResponse(
-        user_input,
+        safeInput,
         analysis.decision,
         analysis.emotion,
-        contextHint
+        contextHint,
+        inputLanguage
       );
     } catch {
       llmResponse = '';
     }
 
-    if (!llmResponse) llmResponse = buildFallbackResponse(user_input, analysis.emotion);
+    if (!llmResponse) llmResponse = buildFallbackResponse(safeInput, analysis.emotion);
 
     let finalText = llmResponse;
     if (NEGATIVE_EMOTIONS.includes(analysis.emotion)) {
       const lower = finalText.toLowerCase();
-      const hasStarter = OPENERS.some((o) => lower.startsWith(o.toLowerCase()));
-      if (!hasStarter) finalText = `${pickOpener()} ${finalText}`;
+      const openerList = OPENERS[inputLanguage] || OPENERS.english;
+      const hasStarter = openerList.some((o) => lower.startsWith(o.toLowerCase()));
+      if (!hasStarter) finalText = `${pickOpener(inputLanguage)} ${finalText}`;
     }
 
     // Priority: action_assistant > micro_plan > nudge > unsaid_probe > normal
@@ -130,13 +175,14 @@ export async function analyzeCareRequest(req, res) {
       majorFeature = 'unsaid_probe';
       extra.unsaidProbe = "Sometimes when things feel 'fine', there is a bit more underneath. If you want, we can stay with it for a moment.";
     }
+    console.log('ACTION:', majorFeature);
 
     if (analysis.intent === 'statement' && ((profile?.fatigue_count || 0) >= 3 || (profile?.overwhelm_count || 0) >= 2)) {
       finalText = `${finalText}\nYou've been feeling this way a few times lately.\nThings seem a bit heavier than usual.`;
     }
 
     await updateSession(session_id, {
-      userInput: user_input,
+      userInput: safeInput,
       analysis,
       response: finalText,
       contextKeywords: mergedContext.repeated_keywords,
@@ -164,8 +210,12 @@ export async function analyzeCareRequest(req, res) {
       },
     });
   } catch (err) {
-    console.error('[/api/analyze] Error:', err);
-    return res.status(500).json({ error: 'Internal server error', detail: err.message });
+    console.error('Analyze Error:', err);
+    return res.json({
+      response: "I'm here with you... something didn't come through right, but we can keep talking.",
+      emotion: 'neutral',
+      action: null,
+    });
   }
 }
 

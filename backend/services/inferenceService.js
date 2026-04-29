@@ -1,7 +1,7 @@
 import { updateCaregiverSignals } from './caregiverProfileService.js';
 
 const EMOTION_KEYWORDS = {
-  sadness: ['sad', 'down', 'empty', 'low'],
+  sadness: ['sad', 'down', 'empty', 'low', 'ಬೇಜಾರ', 'ಉದಾಸ', 'बेचैन', 'उदास', 'bejar'],
   overwhelm: [
     'too much',
     'overwhelmed',
@@ -13,9 +13,14 @@ const EMOTION_KEYWORDS = {
     'no help',
     'too many things',
     'a lot',
+    'ಸಾಧ್ಯವಾಗುತ್ತಿಲ್ಲ',
+    'ಒಬ್ಬನೇ',
+    'संभाल नहीं',
+    'बहुत ज्यादा',
+    'handle agta illa',
   ],
-  fatigue: ['tired', 'exhausted', 'no sleep'],
-  isolation: ['alone', 'no one', 'by myself'],
+  fatigue: ['tired', 'exhausted', 'no sleep', 'ಥಕಾನ', 'ಸೊತ್ತಾಗಿದೆ', 'थकान', 'थक गया', 'thakan'],
+  isolation: ['alone', 'no one', 'by myself', 'ಒಂಟಿ', 'अकेला', 'अकेली'],
   positive: ['happy', 'good', 'great', 'better'],
   neutral: [],
 };
@@ -23,9 +28,9 @@ const EMOTION_KEYWORDS = {
 const NEGATIVE_EMOTIONS = ['sadness', 'overwhelm', 'fatigue', 'isolation'];
 const UNSAID_PHRASES = ['fine', 'okay', 'nothing', 'just tired', "i'm good", 'all good', "it's okay", 'no problem'];
 const MICRO_PLANS = [
-  ['Take 3 slow breaths.', 'Drink water.'],
-  ['Step outside for 2 minutes.', 'Stretch your shoulders.'],
-  ['Sit quietly for a minute.', 'Close your eyes briefly.'],
+  ['Take 3 slow breaths', 'Drink water'],
+  ['Step outside for 2 minutes', 'Stretch your shoulders'],
+  ['Sit quietly for a minute', 'Close your eyes briefly'],
 ];
 
 const normalize = (str) => (str || '').toLowerCase().trim();
@@ -40,21 +45,47 @@ export function detectIntent(userInput) {
 export function detectDomain(text) {
   const input = normalize(text);
 
+  // General knowledge / factual queries - OUT OF SCOPE
+  const generalKnowledgePatterns = [
+    // Who/What is queries
+    /^who\s+is\s+/, /^what\s+is\s+/, /^when\s+is\s+/, /^where\s+is\s+/, /^why\s+is\s+/, /^how\s+is\s+/,
+    // Specific topics (government, geography, etc)
+    'prime minister', 'president', 'capital of', 'population of', 'definition of',
+    // News, weather, time
+    'what time is it', 'weather', 'news', 'stock price', 'exchange rate',
+    // Technical/academic
+    'how to make', 'recipe', 'tutorial', 'guide',
+  ];
+
+  // Emotional signals - IN SCOPE
   const emotionalSignals = [
-    'feel', 'tired', 'sad', 'overwhelmed',
-    'alone', 'stress', 'exhausted',
-    'happy', 'okay', 'fine',
-    "can't handle", 'cant handle', 'everything is on me', 'all on me', 'too much',
+    'feel', 'tired', 'sad', 'overwhelmed', 'alone', 'stress', 'exhausted',
+    'happy', 'okay', 'fine', "can't handle", 'cant handle', 'everything is on me', 
+    'all on me', 'too much', 'help', 'struggling', 'hard', 'difficult',
+    'ಬೇಜಾರ', 'ಸೊತ್ತಾಗಿದೆ', 'ತುಂಬಾ', 'ನನಗೆ',
+    'थकान', 'उदास', 'अकेला', 'संभाल',
+    'bejar', 'tumba', 'nanage', 'thakan',
   ];
 
-  const generalSignals = [
-    'who is', 'what is', 'define',
-    'prime minister', 'capital',
-    'weather', 'news',
-  ];
+  // Check if it's a general knowledge question
+  const isGeneralKnowledge = generalKnowledgePatterns.some((pattern) => {
+    if (typeof pattern === 'string') {
+      return input.includes(pattern);
+    }
+    return pattern.test(input);
+  });
 
-  if (generalSignals.some((p) => input.includes(p))) return 'out_of_scope';
-  if (emotionalSignals.some((p) => input.includes(p))) return 'in_scope';
+  if (isGeneralKnowledge) {
+    return 'out_of_scope';
+  }
+
+  // Check if it's emotional/in scope
+  const isEmotional = emotionalSignals.some((signal) => input.includes(signal));
+  if (isEmotional) {
+    return 'in_scope';
+  }
+
+  // Default to neutral (could be either, but let inference handle it)
   return 'neutral';
 }
 

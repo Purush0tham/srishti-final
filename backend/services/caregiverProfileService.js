@@ -1,13 +1,44 @@
 import CaregiverProfile from '../models/CaregiverProfile.js';
+import Session from '../models/Session.js';
+import mongoose from 'mongoose';
 
 const UNSAID_PHRASES = ['fine', 'okay', 'nothing', 'just tired', "i'm good", 'all good', "it's okay", 'no problem'];
+const NEGATIVE_EMOTIONS = ['sadness', 'overwhelm', 'fatigue', 'isolation'];
 const EMOTIONAL_WORDS = [
   'feel', 'sad', 'tired', 'overwhelmed', 'alone', 'stress', 'exhausted',
   'happy', 'anxious', 'heavy', 'low', 'drained',
 ];
+const EMOTIONAL_PROMPT_HINTS = [
+  'what has been going on',
+  "what's been going on",
+  'want to share',
+  'want to tell me',
+  'how are you feeling',
+  'stay with it',
+];
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+const inMemoryProfiles = new Map();
+
+function isDbReady() {
+  return mongoose.connection.readyState === 1;
+}
+
+function ensureInMemoryProfile(sessionId) {
+  if (!inMemoryProfiles.has(sessionId)) {
+    inMemoryProfiles.set(sessionId, {
+      session_id: sessionId,
+      fatigue_count: 0,
+      overwhelm_count: 0,
+      isolation_count: 0,
+      unsaid_count: 0,
+      last_updated: new Date(),
+    });
+  }
+  return inMemoryProfiles.get(sessionId);
+}
 
 export async function getCaregiverProfile(sessionId) {
+  if (!isDbReady()) return ensureInMemoryProfile(sessionId);
   return CaregiverProfile.findOneAndUpdate(
     { session_id: sessionId },
     { $setOnInsert: { session_id: sessionId } },
@@ -20,6 +51,20 @@ export async function updateCaregiverSignals(sessionId, userInput, emotion) {
   const text = (userInput || '').toLowerCase().trim();
   const words = text.split(/\s+/).filter(Boolean);
   const hasEmotionalLanguage = EMOTIONAL_WORDS.some((w) => text.includes(w));
+  let previousSession = null;
+  if (isDbReady()) {
+    previousSession = await Session.findOne({ session_id: sessionId }).select({ messages: 1 });
+  }
+  const lastMessage = previousSession?.messages?.length
+    ? previousSession.messages[previousSession.messages.length - 1]
+    : null;
+  const previousAssistantText = (lastMessage?.response || '').toLowerCase();
+  const previousEmotion = lastMessage?.analysis?.emotion || 'neutral';
+  const wasEmotionalPrompt =
+    previousAssistantText.includes('?') &&
+    EMOTIONAL_PROMPT_HINTS.some((hint) => previousAssistantText.includes(hint));
+  const isShortReply = words.length > 0 && words.length <= 4;
+  const avoidsEmotionalLanguage = !hasEmotionalLanguage;
 
   if (emotion === 'fatigue') profile.fatigue_count += 1;
   if (emotion === 'overwhelm') profile.overwhelm_count += 1;
@@ -27,12 +72,19 @@ export async function updateCaregiverSignals(sessionId, userInput, emotion) {
   if (UNSAID_PHRASES.includes(text)) profile.unsaid_count += 1;
 
   // Hidden-stress signal: repeatedly short/flat statements without emotional language.
-  if (emotion === 'neutral' && words.length <= 3 && !hasEmotionalLanguage) {
+  if (isShortReply && avoidsEmotionalLanguage && emotion !== 'positive') {
+    profile.unsaid_count += 1;
+  }
+
+  // Hidden-stress signal: short responses after emotional check-ins.
+  if (wasEmotionalPrompt && NEGATIVE_EMOTIONS.includes(previousEmotion) && isShortReply && avoidsEmotionalLanguage) {
     profile.unsaid_count += 1;
   }
 
   profile.last_updated = new Date();
-  await profile.save();
+  if (isDbReady()) {
+    await profile.save();
+  }
   return profile;
 }
 
@@ -74,7 +126,7 @@ export function buildWeeklySummary(profile) {
 
   if (!parts.length) return 'This week felt mostly steady, with a few small pressure points along the way.';
 
-  return `This week felt a bit heavy-you have been carrying ${parts.join(', ')}.\nYou have still been trying to keep everything moving, even with low space to recover.`;
+  return `This week felt a bit heavy. You have been carrying ${parts.join(', ')}.\nEven with limited rest and support, you kept showing up and holding things together.`;
 }
 
 export function shouldResetProfileWindow(profile) {
@@ -100,6 +152,8 @@ export async function resetCaregiverSignals(profile) {
   profile.isolation_count = 0;
   profile.unsaid_count = 0;
   profile.last_updated = new Date();
-  await profile.save();
+  if (isDbReady() && typeof profile.save === 'function') {
+    await profile.save();
+  }
   return profile;
 }

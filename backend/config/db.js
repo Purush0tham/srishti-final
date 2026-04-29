@@ -7,8 +7,10 @@ export async function connectDB() {
   try {
     const conn = await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 5000 });
     console.log('MongoDB Connected:', conn.connection.host);
+    return true;
   } catch (err) {
     console.error('MongoDB Connection Error:', err.message);
-    process.exit(1);
+    console.warn('Continuing without MongoDB persistence (degraded mode).');
+    return false;
   }
 }
